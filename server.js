@@ -4,6 +4,9 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 const dotenv = require("dotenv")
 const result = dotenv.config();
+const { serve } = require("inngest/express");
+const { inngest } = require("./inngest/client");
+const { notificarVictoria } = require("./inngest/functions/sudoku-functions");
 
 const app = express();
 
@@ -14,25 +17,32 @@ const PORT = process.env.PORT || 3000;
 app.use(cors()); //Para las peticiones desde Android
 app.use(express.json());
 
+app.use("/api/inngest", serve({ 
+    client: inngest, 
+    functions: [notificarVictoria] 
+}));
 
 //conectar con mongodb
 
 async function connectarBd(){
-    try{
+    try {
         console.log("Iniciando conexión a MongoDB...")
-        await mongoose.connect(process.env.MONGODB_URI,{
-            useNewUrlParser: true,
-            useUnifiedTopology: true
+        // Intentamos conectar, pero con un tiempo de espera corto (timeout)
+        await mongoose.connect(process.env.MONGODB_URI, {
+            serverSelectionTimeoutMS: 5000 
         });
         console.log("Conectado a MongoDB");
+    } catch(error) {
+        // Si falla, mostramos el error pero NO detenemos el proceso
+        console.log("MongoDB offline (Error de red), pero el servidor arrancará igual.");
+        console.log("Detalle:", error.message);
+    }
 
-        app.listen(PORT,'0.0.0.0', () =>{
-            console.log(`Servidor ejecutándose en http://localhost:${3000}`);
-        });
-    }
-    catch(error){
-        console.log("Error en conexión a MongoDB: ", error);
-    }
+    // Arrancamos el servidor de Express fuera del catch
+    app.listen(PORT, '0.0.0.0', () => {
+        console.log(`Servidor ejecutándose en http://localhost:${PORT}`);
+        console.log(`Pista: Si estás en clase, usa el hotspot de tu móvil si Mongo sigue fallando.`);
+    });
 }
 
 const puntuacionEsquema = new mongoose.Schema({
@@ -94,6 +104,15 @@ app.post("/api/puntuacion", async (req, res) => {
             });
             await nuevaPuntuacion.save();
             console.log("Puntuación guardada:", nuevaPuntuacion);
+            await inngest.send({
+                name: "sudoku/completado",
+                data: {
+                    usuario: nombre,
+                    tiempo: tiempo,
+                    dificultad: dificultad
+                }
+            });
+            res.status(201).json({ mensaje: "Puntuación registrada y evento enviado" });
     }
     catch(error){
         console.log("Error al guardar la puntuacion",error);
